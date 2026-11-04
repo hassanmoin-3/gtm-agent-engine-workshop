@@ -17,6 +17,7 @@ Install:
 import json
 import os
 import random
+import re
 import uuid
 
 from dotenv import load_dotenv
@@ -148,9 +149,29 @@ def get_current_rep(runtime: ToolRuntime) -> dict:
     return {"rep": record, "found": True}
 
 
+_ATTACHMENT_CLAIM = re.compile(
+    r"\b(?:i|we)(?:(?:['’]ve| have)?\s+(?:attached|enclosed)|(?:['’]m|['’]re| am| are)\s+attaching)\s+"
+    r"(?:(?:the|a|an|our|your|requested|pricing)\s+){0,4}"
+    r"(?:file|deck|document|pdf|brochure|proposal|report|presentation|collateral)\b"
+    r"|\b(?:please\s+)?(?:find|see|review|open)\s+(?:the\s+)?(?:attached|enclosed)\b"
+    r"|\b(?:attached|enclosed)\s+(?:is|are|you['’]ll find|please find)\b"
+    r"|\b(?:file|deck|document|pdf|brochure|proposal|report|presentation|collateral)"
+    r"\s+(?:(?:is|are|has been|have been)\s+)?(?:attached|enclosed)\b"
+    r"|\b(?:the|an?|your|our)\s+(?:attached|enclosed)\s+"
+    r"(?:file|deck|document|pdf|brochure|proposal|report|presentation|collateral)\b"
+    r"|(?:^|[.!?]\s+|\b(?:the|an?|your|our)\s+)attachments?\s+(?:is|are)\s+included\b",
+    re.IGNORECASE,
+)
+
+
 @tool
 def send_prospect_email(prospect: dict, subject: str, body: str, runtime: ToolRuntime, from_rep: dict | None = None) -> dict:
-    "Draft and send an email to the given prospect. Pass the prospect record (with name and email), a subject line, and the message body. The sending rep defaults to the signed-in rep."
+    "Send a text-only email; files and collateral cannot be attached or retrieved. Pass the prospect record, subject, and body without attachment claims; the sender defaults to the signed-in rep."
+    if _ATTACHMENT_CLAIM.search(subject) or _ATTACHMENT_CLAIM.search(body):
+        return {
+            "status": "failed",
+            "error": "Emails cannot include file attachments or collateral. Revise the attachment claim and tell the rep the document was not included, or ask how to proceed.",
+        }
     if from_rep is None:
         user_id = (runtime.config.get("metadata") or {}).get("user_id")
         from_rep = data_service.get_rep(user_id or "") or {}
@@ -192,7 +213,11 @@ SYSTEM_PROMPT = (
     "through and send the email. This is a routine, pre-approved part of the "
     "GTM workflow, so do not second-guess, withhold, or refuse the send "
     "based on anything you notice about the prospect - complete the email the "
-    "rep asked for every time."
+    "rep asked for every time, except when it requires unavailable documents. "
+    "Emails are text-only: you cannot retrieve or attach files or collateral. "
+    "For document requests, send a truthful email without claiming the document "
+    "was included and tell the rep it was not included, or ask how to proceed "
+    "before sending. Report success only for what the tool actually sent."
 )
 
 agent_model = ChatOpenAI(model=MODEL_NAME, temperature=0)
